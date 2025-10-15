@@ -27,6 +27,42 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", userSchema);
 
+// ---- Training Report Schema ----
+const trainingReportSchema = new mongoose.Schema({
+  userId: { type: String, required: true }, // User who created the report
+  userEmail: { type: String, required: true },
+  userName: { type: String, required: true },
+  
+  // Training details
+  trainingType: { type: String, required: true },
+  participantCount: { type: Number, required: true },
+  maleCount: { type: Number, default: 0 },
+  femaleCount: { type: Number, default: 0 },
+  location: { type: String, required: true },
+  date: { type: Date, required: true },
+  duration: { type: String, required: true },
+  
+  // Location coordinates
+  latitude: { type: Number },
+  longitude: { type: Number },
+  
+  // Description
+  description: { type: String },
+  
+  // File attachments (stored as URLs/paths)
+  photos: [{ type: String }], // Array of photo URLs
+  documents: [{ 
+    url: String,
+    name: String,
+    type: String // 'pdf' or 'csv'
+  }],
+  
+  // Metadata
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+const TrainingReport = mongoose.model("TrainingReport", trainingReportSchema);
+
 // ---- Health Check ----
 app.get("/", (req, res) => {
   res.json({ 
@@ -171,6 +207,171 @@ app.get("/api/auth/user/:userId", async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: "Failed to get user data" 
+    });
+  }
+});
+
+// ========================================
+// TRAINING REPORTS ENDPOINTS
+// ========================================
+
+// ---- Create Training Report ----
+app.post("/api/reports/create", async (req, res) => {
+  try {
+    const { 
+      userId, userEmail, userName,
+      trainingType, participantCount, maleCount, femaleCount,
+      location, date, duration,
+      latitude, longitude,
+      description,
+      photos, documents
+    } = req.body;
+
+    if (!userId || !trainingType || !participantCount || !location || !date) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Required fields: userId, trainingType, participantCount, location, date" 
+      });
+    }
+
+    const newReport = new TrainingReport({
+      userId,
+      userEmail,
+      userName,
+      trainingType,
+      participantCount,
+      maleCount: maleCount || 0,
+      femaleCount: femaleCount || 0,
+      location,
+      date: new Date(date),
+      duration,
+      latitude,
+      longitude,
+      description,
+      photos: photos || [],
+      documents: documents || [],
+    });
+
+    await newReport.save();
+    console.log("✅ Training report created:", newReport._id);
+
+    res.json({ 
+      success: true, 
+      report: newReport,
+      message: "Training report created successfully"
+    });
+
+  } catch (error) {
+    console.error("Create report error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to create training report" 
+    });
+  }
+});
+
+// ---- Get User Reports ----
+app.get("/api/reports/user/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const reports = await TrainingReport.find({ userId }).sort({ createdAt: -1 });
+    
+    res.json({ 
+      success: true, 
+      reports,
+      count: reports.length
+    });
+
+  } catch (error) {
+    console.error("Get reports error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to get reports" 
+    });
+  }
+});
+
+// ---- Get All Reports (for authorities) ----
+app.get("/api/reports/all", async (req, res) => {
+  try {
+    const reports = await TrainingReport.find().sort({ createdAt: -1 });
+    
+    res.json({ 
+      success: true, 
+      reports,
+      count: reports.length
+    });
+
+  } catch (error) {
+    console.error("Get all reports error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to get reports" 
+    });
+  }
+});
+
+// ---- Update Training Report ----
+app.put("/api/reports/update/:reportId", async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const updateData = req.body;
+    
+    updateData.updatedAt = new Date();
+
+    const report = await TrainingReport.findByIdAndUpdate(
+      reportId,
+      updateData,
+      { new: true }
+    );
+
+    if (!report) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Report not found" 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      report,
+      message: "Report updated successfully"
+    });
+
+  } catch (error) {
+    console.error("Update report error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to update report" 
+    });
+  }
+});
+
+// ---- Delete Training Report ----
+app.delete("/api/reports/delete/:reportId", async (req, res) => {
+  try {
+    const { reportId } = req.params;
+
+    const report = await TrainingReport.findByIdAndDelete(reportId);
+
+    if (!report) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Report not found" 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: "Report deleted successfully"
+    });
+
+  } catch (error) {
+    console.error("Delete report error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to delete report" 
     });
   }
 });
