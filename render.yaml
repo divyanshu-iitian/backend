@@ -2,13 +2,11 @@ services:
   - type: web
     name: ndma-auth-backend
     runtime: node
-    region: singapore
-    plan: free
-    branch: main
     buildCommand: npm install
     startCommand: npm start
+    plan: free
     envVars:
       - key: MONGODB_URI
         sync: false
       - key: PORT
-        value: 5000
+        value: 10000
