@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const LocationSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -27,4 +27,4 @@ const ReportSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
-module.exports = mongoose.model('Report', ReportSchema);
+export default mongoose.model('Report', ReportSchema);
