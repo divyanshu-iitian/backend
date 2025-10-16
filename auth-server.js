@@ -22,7 +22,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI; // Must be provided via environment
-const JWT_SECRET = process.env.JWT_SECRET; // Must be provided via environment in production
+let JWT_SECRET = process.env.JWT_SECRET; // Must be provided via environment in production
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 // ---- User Schema ----
@@ -473,8 +473,8 @@ async function start() {
         process.exit(1);
       } else {
         console.warn("⚠️ JWT_SECRET not set. Using ephemeral dev secret (dev only). Tokens will reset on restart.");
-        // eslint-disable-next-line no-global-assign
-        global.JWT_SECRET = Math.random().toString(36).slice(2) + Date.now();
+        JWT_SECRET = Math.random().toString(36).slice(2) + Date.now();
+        process.env.JWT_SECRET = JWT_SECRET;
       }
     }
 
