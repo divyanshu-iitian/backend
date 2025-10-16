@@ -39,41 +39,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", userSchema);
 
-// ---- Training Report Schema ----
-const trainingReportSchema = new mongoose.Schema({
-  userId: { type: String, required: true }, // User who created the report
-  userEmail: { type: String, required: true },
-  userName: { type: String, required: true },
-  
-  // Training details
-  trainingType: { type: String, required: true },
-  participantCount: { type: Number, required: true },
-  maleCount: { type: Number, default: 0 },
-  femaleCount: { type: Number, default: 0 },
-  location: { type: String, required: true },
-  date: { type: Date, required: true },
-  duration: { type: String, required: true },
-  
-  // Location coordinates
-  latitude: { type: Number },
-  longitude: { type: Number },
-  
-  // Description
-  description: { type: String },
-  
-  // File attachments (stored as URLs/paths)
-  photos: [{ type: String }], // Array of photo URLs
-  documents: [{ 
-    url: String,
-    name: String,
-    type: String // 'pdf' or 'csv'
-  }],
-  
-  // Metadata
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-const TrainingReport = mongoose.model("TrainingReport", trainingReportSchema);
+import Report from './models/Report.js';
 
 // ---- Health Check ----
 app.get("/", (req, res) => {
@@ -274,34 +240,27 @@ app.get("/api/auth/user/:userId", async (req, res) => {
 app.post("/api/reports/create", authenticate, async (req, res) => {
   try {
     const { 
-      trainingType, participantCount, maleCount, femaleCount,
-      location, date, duration,
-      latitude, longitude,
-      description,
-      photos, documents
+      trainingType, location, date, participants, duration,
+      description, effectiveness, photos, documents
     } = req.body;
 
-    if (!trainingType || !participantCount || !location || !date) {
+    if (!trainingType || !location || !date) {
       return res.status(400).json({ 
         success: false, 
-        error: "Required fields: trainingType, participantCount, location, date" 
+        error: "Required fields: trainingType, location, date" 
       });
     }
 
-    const newReport = new TrainingReport({
+    const newReport = new Report({
       userId: req.user.id,
       userEmail: req.user.email,
-      userName: req.user.name,
       trainingType,
-      participantCount,
-      maleCount: maleCount || 0,
-      femaleCount: femaleCount || 0,
       location,
-      date: new Date(date),
+      date,
+      participants,
       duration,
-      latitude,
-      longitude,
       description,
+      effectiveness,
       photos: photos || [],
       documents: documents || [],
     });
@@ -309,7 +268,7 @@ app.post("/api/reports/create", authenticate, async (req, res) => {
     await newReport.save();
     console.log("✅ Training report created:", newReport._id);
 
-    res.json({ 
+    res.status(201).json({ 
       success: true, 
       report: newReport,
       message: "Training report created successfully"
@@ -328,35 +287,11 @@ app.post("/api/reports/create", authenticate, async (req, res) => {
 // Current user's reports (recommended)
 app.get("/api/reports/user", authenticate, async (req, res) => {
   try {
-    const reports = await TrainingReport.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    const reports = await Report.find({ userId: req.user.id }).sort({ createdAt: -1 });
     res.json({ success: true, reports, count: reports.length });
   } catch (error) {
     console.error("Get reports error:", error);
     res.status(500).json({ success: false, error: "Failed to get reports" });
-  }
-});
-
-// Backward-compatible: only allow self or authority
-app.get("/api/reports/user/:userId", authenticate, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    if (req.user.id !== userId && req.user.role !== 'authority') {
-      return res.status(403).json({ success: false, error: "Forbidden" });
-    }
-    const reports = await TrainingReport.find({ userId }).sort({ createdAt: -1 });
-    
-    res.json({ 
-      success: true, 
-      reports,
-      count: reports.length
-    });
-
-  } catch (error) {
-    console.error("Get reports error:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: "Failed to get reports" 
-    });
   }
 });
 
@@ -366,7 +301,7 @@ app.get("/api/reports/all", authenticate, async (req, res) => {
     if (req.user.role !== 'authority') {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
-    const reports = await TrainingReport.find().sort({ createdAt: -1 });
+    const reports = await Report.find().sort({ createdAt: -1 });
     
     res.json({ 
       success: true, 
@@ -389,18 +324,16 @@ app.put("/api/reports/update/:reportId", authenticate, async (req, res) => {
     const { reportId } = req.params;
     const updateData = req.body;
     
-    updateData.updatedAt = new Date();
-
     // Only owner or authority can update
-    const existing = await TrainingReport.findById(reportId);
+    const existing = await Report.findById(reportId);
     if (!existing) {
       return res.status(404).json({ success: false, error: "Report not found" });
     }
-    if (existing.userId !== req.user.id && req.user.role !== 'authority') {
+    if (existing.userId.toString() !== req.user.id && req.user.role !== 'authority') {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
 
-    const report = await TrainingReport.findByIdAndUpdate(reportId, updateData, { new: true });
+    const report = await Report.findByIdAndUpdate(reportId, updateData, { new: true });
 
     if (!report) {
       return res.status(404).json({ 
@@ -430,15 +363,15 @@ app.delete("/api/reports/delete/:reportId", authenticate, async (req, res) => {
     const { reportId } = req.params;
 
     // Only owner or authority can delete
-    const existing = await TrainingReport.findById(reportId);
+    const existing = await Report.findById(reportId);
     if (!existing) {
       return res.status(404).json({ success: false, error: "Report not found" });
     }
-    if (existing.userId !== req.user.id && req.user.role !== 'authority') {
+    if (existing.userId.toString() !== req.user.id && req.user.role !== 'authority') {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
 
-    const report = await TrainingReport.findByIdAndDelete(reportId);
+    const report = await Report.findByIdAndDelete(reportId);
 
     if (!report) {
       return res.status(404).json({ 
