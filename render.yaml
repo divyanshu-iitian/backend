@@ -12,5 +12,7 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+      - key: ALLOW_UNSAFE_FALLBACK
+        value: "true"
       - key: PORT
         value: 10000

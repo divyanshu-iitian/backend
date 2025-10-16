@@ -24,6 +24,7 @@ const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI; // Must be provided via environment
 let JWT_SECRET = process.env.JWT_SECRET; // Must be provided via environment in production
 const IS_PROD = process.env.NODE_ENV === 'production';
+const ALLOW_UNSAFE_FALLBACK = (process.env.ALLOW_UNSAFE_FALLBACK || '').toLowerCase() === 'true';
 
 // ---- User Schema ----
 const userSchema = new mongoose.Schema({
@@ -468,14 +469,14 @@ async function start() {
       process.exit(1);
     }
     if (!JWT_SECRET) {
-      if (IS_PROD) {
+      if (IS_PROD && !ALLOW_UNSAFE_FALLBACK) {
         console.error("❌ JWT_SECRET not set. Set it as an environment variable in production.");
         process.exit(1);
-      } else {
-        console.warn("⚠️ JWT_SECRET not set. Using ephemeral dev secret (dev only). Tokens will reset on restart.");
-        JWT_SECRET = Math.random().toString(36).slice(2) + Date.now();
-        process.env.JWT_SECRET = JWT_SECRET;
       }
+      const scope = IS_PROD ? 'PRODUCTION (UNSAFE FALLBACK ENABLED)' : 'dev';
+      console.warn(`⚠️ JWT_SECRET not set. Generating ephemeral secret in ${scope}. Tokens will reset on restart.`);
+      JWT_SECRET = Math.random().toString(36).slice(2) + Date.now();
+      process.env.JWT_SECRET = JWT_SECRET;
     }
 
     console.log("🔄 Connecting to MongoDB...");
