@@ -4,15 +4,25 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
+// Configure CORS to allow Authorization header for token-based auth
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://divyanshumishra0208_db_user:1l3BoCM6C74G0NPr@cluster0.jsbvffu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+const JWT_SECRET = process.env.JWT_SECRET || "dev_replace_with_strong_secret";
 
 // ---- User Schema ----
 const userSchema = new mongoose.Schema({
@@ -68,9 +78,36 @@ app.get("/", (req, res) => {
   res.json({ 
     status: "running", 
     service: "NDMA Auth Backend",
-    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    auth: "jwt-enabled"
   });
 });
+
+// ---- Auth Middleware (JWT) ----
+function authenticate(req, res, next) {
+  try {
+    const authHeader = req.headers["authorization"] || req.headers["Authorization"];
+    if (!authHeader) {
+      return res.status(401).json({ success: false, error: "Authorization header missing" });
+    }
+    const parts = authHeader.split(" ");
+    const token = parts.length === 2 ? parts[1] : null;
+    if (!token) {
+      return res.status(401).json({ success: false, error: "Token missing" });
+    }
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = {
+      id: payload.userId,
+      email: payload.email,
+      role: payload.role,
+      name: payload.name,
+    };
+    return next();
+  } catch (err) {
+    console.error("JWT auth error:", err.message);
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
+  }
+}
 
 // ---- Register ----
 app.post("/api/auth/register", async (req, res) => {
@@ -94,10 +131,12 @@ app.post("/api/auth/register", async (req, res) => {
       });
     }
 
+    const passwordHash = await bcrypt.hash(password, 10);
+
     const newUser = new User({
       name: name.trim(),
       email: normalizedEmail,
-      password,
+      password: passwordHash,
       role: role || 'trainer',
       organization: 'NDMA Training Institute',
       phone: '',
@@ -116,9 +155,16 @@ app.post("/api/auth/register", async (req, res) => {
     };
 
     console.log(`✅ User registered: ${newUser.email}`);
+    // Auto-issue token on register for convenience
+    const token = jwt.sign(
+      { userId: newUser._id.toString(), email: newUser.email, role: newUser.role, name: newUser.name },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
     res.status(201).json({ 
       success: true, 
       user: userResponse,
+      token,
       message: "Account created successfully" 
     });
 
@@ -153,7 +199,8 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    if (user.password !== password) {
+    const passwordOk = await bcrypt.compare(password, user.password);
+    if (!passwordOk) {
       return res.status(401).json({ 
         success: false, 
         error: "Incorrect password. Try again." 
@@ -171,9 +218,15 @@ app.post("/api/auth/login", async (req, res) => {
     };
 
     console.log(`✅ User logged in: ${user.email}`);
+    const token = jwt.sign(
+      { userId: user._id.toString(), email: user.email, role: user.role, name: user.name },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
     res.json({ 
       success: true, 
       user: userResponse,
+      token,
       message: "Login successful" 
     });
 
@@ -216,10 +269,9 @@ app.get("/api/auth/user/:userId", async (req, res) => {
 // ========================================
 
 // ---- Create Training Report ----
-app.post("/api/reports/create", async (req, res) => {
+app.post("/api/reports/create", authenticate, async (req, res) => {
   try {
     const { 
-      userId, userEmail, userName,
       trainingType, participantCount, maleCount, femaleCount,
       location, date, duration,
       latitude, longitude,
@@ -227,17 +279,17 @@ app.post("/api/reports/create", async (req, res) => {
       photos, documents
     } = req.body;
 
-    if (!userId || !trainingType || !participantCount || !location || !date) {
+    if (!trainingType || !participantCount || !location || !date) {
       return res.status(400).json({ 
         success: false, 
-        error: "Required fields: userId, trainingType, participantCount, location, date" 
+        error: "Required fields: trainingType, participantCount, location, date" 
       });
     }
 
     const newReport = new TrainingReport({
-      userId,
-      userEmail,
-      userName,
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userName: req.user.name,
       trainingType,
       participantCount,
       maleCount: maleCount || 0,
@@ -271,10 +323,24 @@ app.post("/api/reports/create", async (req, res) => {
 });
 
 // ---- Get User Reports ----
-app.get("/api/reports/user/:userId", async (req, res) => {
+// Current user's reports (recommended)
+app.get("/api/reports/user", authenticate, async (req, res) => {
+  try {
+    const reports = await TrainingReport.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json({ success: true, reports, count: reports.length });
+  } catch (error) {
+    console.error("Get reports error:", error);
+    res.status(500).json({ success: false, error: "Failed to get reports" });
+  }
+});
+
+// Backward-compatible: only allow self or authority
+app.get("/api/reports/user/:userId", authenticate, async (req, res) => {
   try {
     const { userId } = req.params;
-
+    if (req.user.id !== userId && req.user.role !== 'authority') {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
     const reports = await TrainingReport.find({ userId }).sort({ createdAt: -1 });
     
     res.json({ 
@@ -293,8 +359,11 @@ app.get("/api/reports/user/:userId", async (req, res) => {
 });
 
 // ---- Get All Reports (for authorities) ----
-app.get("/api/reports/all", async (req, res) => {
+app.get("/api/reports/all", authenticate, async (req, res) => {
   try {
+    if (req.user.role !== 'authority') {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
     const reports = await TrainingReport.find().sort({ createdAt: -1 });
     
     res.json({ 
@@ -313,18 +382,23 @@ app.get("/api/reports/all", async (req, res) => {
 });
 
 // ---- Update Training Report ----
-app.put("/api/reports/update/:reportId", async (req, res) => {
+app.put("/api/reports/update/:reportId", authenticate, async (req, res) => {
   try {
     const { reportId } = req.params;
     const updateData = req.body;
     
     updateData.updatedAt = new Date();
 
-    const report = await TrainingReport.findByIdAndUpdate(
-      reportId,
-      updateData,
-      { new: true }
-    );
+    // Only owner or authority can update
+    const existing = await TrainingReport.findById(reportId);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "Report not found" });
+    }
+    if (existing.userId !== req.user.id && req.user.role !== 'authority') {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+
+    const report = await TrainingReport.findByIdAndUpdate(reportId, updateData, { new: true });
 
     if (!report) {
       return res.status(404).json({ 
@@ -349,9 +423,18 @@ app.put("/api/reports/update/:reportId", async (req, res) => {
 });
 
 // ---- Delete Training Report ----
-app.delete("/api/reports/delete/:reportId", async (req, res) => {
+app.delete("/api/reports/delete/:reportId", authenticate, async (req, res) => {
   try {
     const { reportId } = req.params;
+
+    // Only owner or authority can delete
+    const existing = await TrainingReport.findById(reportId);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "Report not found" });
+    }
+    if (existing.userId !== req.user.id && req.user.role !== 'authority') {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
 
     const report = await TrainingReport.findByIdAndDelete(reportId);
 
@@ -396,6 +479,11 @@ async function start() {
       console.log(`  POST   http://192.168.1.9:${PORT}/api/auth/register`);
       console.log(`  POST   http://192.168.1.9:${PORT}/api/auth/login`);
       console.log(`  GET    http://192.168.1.9:${PORT}/api/auth/user/:userId`);
+      console.log(`\n📋 Report Endpoints (JWT required):`);
+      console.log(`  POST   /api/reports/create`);
+      console.log(`  GET    /api/reports/user`);
+      console.log(`  GET    /api/reports/user/:userId`);
+      console.log(`  GET    /api/reports/all (authority only)`);
       console.log(`\n✅ Ready for authentication from network!\n`);
     });
 
