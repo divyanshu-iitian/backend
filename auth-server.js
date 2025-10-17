@@ -239,46 +239,78 @@ app.get("/api/auth/user/:userId", async (req, res) => {
 // ---- Create Training Report ----
 app.post("/api/reports/create", authenticate, async (req, res) => {
   try {
-    const { 
+    console.log("📥 POST /api/reports/create received");
+    console.log("👤 User ID:", req.user.id, "Type:", typeof req.user.id);
+    console.log("📊 Request body:", JSON.stringify(req.body, null, 2));
+
+    const {
       trainingType, location, date, participants, duration,
-      description, effectiveness, photos, documents
+      description, effectiveness, photos, documents, userName, userEmail
     } = req.body;
 
     if (!trainingType || !location || !date) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "Required fields: trainingType, location, date" 
+      console.log("❌ Missing required fields");
+      return res.status(400).json({
+        success: false,
+        error: "Required fields: trainingType, location, date"
+      });
+    }
+
+    // Convert string userId to MongoDB ObjectId
+    let userObjectId;
+    try {
+      userObjectId = new mongoose.Types.ObjectId(req.user.id);
+      console.log("✅ Converted userId to ObjectId:", userObjectId);
+    } catch (err) {
+      console.error("❌ Invalid userId format:", req.user.id);
+      return res.status(400).json({
+        success: false,
+        error: "Invalid user ID format"
       });
     }
 
     const newReport = new Report({
-      userId: req.user.id,
-      userEmail: req.user.email,
+      userId: userObjectId,
+      userEmail: userEmail || req.user.email,
+      userName: userName || req.user.name || 'Unknown',
       trainingType,
       location,
       date,
-      participants,
+      participants: Number(participants) || 0,
       duration,
       description,
       effectiveness,
-      photos: photos || [],
+      photos: Array.isArray(photos) ? photos : (photos ? [photos] : []),
       documents: documents || [],
     });
 
-    await newReport.save();
-    console.log("✅ Training report created:", newReport._id);
+    console.log("💾 Attempting to save report:", JSON.stringify(newReport, null, 2));
 
-    res.status(201).json({ 
-      success: true, 
+    try {
+      await newReport.save();
+      console.log("✅ Report saved successfully with ID:", newReport._id);
+      console.log("✅ Full saved report:", newReport);
+    } catch (saveError) {
+      console.error("❌ Save operation failed:", saveError.message);
+      console.error("❌ Save error details:", saveError);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to save report: " + saveError.message
+      });
+    }
+
+    res.status(201).json({
+      success: true,
       report: newReport,
       message: "Training report created successfully"
     });
 
   } catch (error) {
-    console.error("Create report error:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: "Failed to create training report" 
+    console.error("❌ Create report error:", error.message);
+    console.error("❌ Full error stack:", error.stack);
+    res.status(500).json({
+      success: false,
+      error: "Failed to create report: " + error.message
     });
   }
 });
@@ -287,11 +319,36 @@ app.post("/api/reports/create", authenticate, async (req, res) => {
 // Current user's reports (recommended)
 app.get("/api/reports/user", authenticate, async (req, res) => {
   try {
-    const reports = await Report.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    console.log("📥 GET /api/reports/user - User:", req.user.email);
+    console.log("👤 User ID:", req.user.id, "Type:", typeof req.user.id);
+
+    let userObjectId;
+    try {
+      userObjectId = new mongoose.Types.ObjectId(req.user.id);
+      console.log("✅ Converted userId to ObjectId for query:", userObjectId);
+    } catch (err) {
+      console.log("❌ Invalid userId format:", req.user.id);
+      return res.status(400).json({ success: false, error: "Invalid user ID format" });
+    }
+
+    console.log("🔍 Searching for reports with userId:", userObjectId);
+    const reports = await Report.find({ userId: userObjectId }).sort({ createdAt: -1 });
+    console.log("✅ Found reports:", reports.length);
+
+    if (reports.length > 0) {
+      console.log("📋 First report details:", {
+        id: reports[0]._id,
+        userId: reports[0].userId,
+        userName: reports[0].userName,
+        trainingType: reports[0].trainingType,
+        createdAt: reports[0].createdAt
+      });
+    }
+
     res.json({ success: true, reports, count: reports.length });
   } catch (error) {
-    console.error("Get reports error:", error);
-    res.status(500).json({ success: false, error: "Failed to get reports" });
+    console.error("❌ Get reports error:", error);
+    res.status(500).json({ success: false, error: "Failed to get reports: " + error.message });
   }
 });
 
