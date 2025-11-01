@@ -90,11 +90,11 @@ function generateAccessToken(user) {
   return jwt.sign(
     { 
       userId: user._id.toString(), 
-      email: user.email || user.phone,
-      phone: user.phone,
+      email: user.email || '',
+      phone: user.phone || '',
       role: user.role, 
       name: user.name,
-      organization: user.organization
+      organization: user.organization || 'NDMA'
     },
     JWT_SECRET,
     { expiresIn: "15m" } // Short-lived access token (15 minutes)
