@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 // Attendance Record Schema
 const attendanceRecordSchema = new mongoose.Schema({
   session_id: { type: mongoose.Schema.Types.ObjectId, ref: 'AttendanceSession', required: true },
-  training_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Training', required: true },
+  training_id: { type: mongoose.Schema.Types.Mixed, required: true }, // Accept ObjectId or String for flexibility
   user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   user_name: { type: String, required: true },
   user_phone: String,
