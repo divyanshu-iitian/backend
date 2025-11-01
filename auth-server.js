@@ -306,18 +306,33 @@ app.post("/api/auth/login", async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ 
         success: false, 
-        error: "Please provide email and password" 
+        error: "Please provide email/phone and password" 
       });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await User.findOne({ email: normalizedEmail });
-
-    if (!user) {
-      return res.status(401).json({ 
-        success: false, 
-        error: "User not found. Please register first." 
-      });
+    // Check if input is phone number (10 digits) or email
+    const isPhone = /^\d{10}$/.test(email.trim());
+    
+    let user;
+    if (isPhone) {
+      // Trainee login with phone
+      user = await User.findOne({ phone: email.trim() });
+      if (!user) {
+        return res.status(401).json({ 
+          success: false, 
+          error: "Phone number not registered. Please register first." 
+        });
+      }
+    } else {
+      // Trainer/Authority login with email
+      const normalizedEmail = email.trim().toLowerCase();
+      user = await User.findOne({ email: normalizedEmail });
+      if (!user) {
+        return res.status(401).json({ 
+          success: false, 
+          error: "Email not registered. Please register first." 
+        });
+      }
     }
 
     const passwordOk = await bcrypt.compare(password, user.password);
@@ -331,16 +346,25 @@ app.post("/api/auth/login", async (req, res) => {
     const userResponse = {
       id: user._id.toString(),
       name: user.name,
-      email: user.email,
+      email: user.email || '',
+      phone: user.phone || '',
       role: user.role,
-      organization: user.organization,
-      phone: user.phone,
+      organization: user.organization || '',
+      age_bracket: user.age_bracket || '',
+      district: user.district || '',
+      state: user.state || '',
       createdAt: user.createdAt,
     };
 
-    console.log(`✅ User logged in: ${user.email}`);
+    console.log(`✅ User logged in: ${user.phone || user.email}`);
     const token = jwt.sign(
-      { userId: user._id.toString(), email: user.email, role: user.role, name: user.name },
+      { 
+        userId: user._id.toString(), 
+        email: user.email || '', 
+        phone: user.phone || '',
+        role: user.role, 
+        name: user.name 
+      },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
