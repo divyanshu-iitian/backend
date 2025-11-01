@@ -1445,27 +1445,89 @@ async function start() {
 
     // Seed default authority user if missing
     try {
-      const seedEmail = process.env.SEED_AUTH_EMAIL || 'authority@ndma.gov.in';
-      const seedPass = process.env.SEED_AUTH_PASSWORD || 'authority123';
+      const seedEmail = 'authority@training.gov.in';
+      const seedPass = 'authority123';
       const existing = await User.findOne({ email: seedEmail.toLowerCase() });
       if (!existing) {
         const passwordHash = await bcrypt.hash(seedPass, 10);
         const seeded = new User({
-          name: 'NDMA Authority',
+          name: 'Central Authority',
           email: seedEmail.toLowerCase(),
           password: passwordHash,
           role: 'authority',
-          organization: 'NDMA',
+          organization: 'Central Authority',
           phone: '',
           designation: 'Administrator'
         });
         await seeded.save();
-        console.log(`🌱 Seeded default authority account: ${seedEmail} / ${seedPass}`);
+        console.log(`🌱 Seeded central authority: ${seedEmail} / ${seedPass}`);
       } else {
         console.log(`🔎 Authority account present: ${seedEmail}`);
       }
     } catch (seedErr) {
       console.warn('⚠️ Authority seed failed:', seedErr.message);
+    }
+
+    // Seed demo trainer accounts for all organizations
+    const demoTrainers = [
+      {
+        name: 'NDMA Trainer',
+        email: 'divyanshu@ndma.gov.in',
+        password: '123456',
+        organization: 'NDMA',
+        designation: 'Training Officer'
+      },
+      {
+        name: 'LBSNAA Trainer',
+        email: 'trainer@lbsnaa.gov.in',
+        password: '123456',
+        organization: 'LBSNAA',
+        designation: 'Training Officer'
+      },
+      {
+        name: 'ATI Trainer',
+        email: 'trainer@ati.gov.in',
+        password: '123456',
+        organization: 'ATI',
+        designation: 'Training Officer'
+      },
+      {
+        name: 'SDMA Trainer',
+        email: 'trainer@sdma.gov.in',
+        password: '123456',
+        organization: 'SDMA',
+        designation: 'Training Officer'
+      }
+    ];
+
+    for (const trainerData of demoTrainers) {
+      try {
+        const existing = await User.findOne({ email: trainerData.email.toLowerCase() });
+        if (!existing) {
+          const passwordHash = await bcrypt.hash(trainerData.password, 10);
+          const trainer = new User({
+            ...trainerData,
+            email: trainerData.email.toLowerCase(),
+            password: passwordHash,
+            role: 'trainer',
+            phone: ''
+          });
+          await trainer.save();
+          console.log(`🌱 Seeded ${trainerData.organization} trainer: ${trainerData.email} / ${trainerData.password}`);
+        } else {
+          // Update password for existing NDMA trainer (divyanshu)
+          if (trainerData.email === 'divyanshu@ndma.gov.in') {
+            const passwordHash = await bcrypt.hash('123456', 10);
+            existing.password = passwordHash;
+            await existing.save();
+            console.log(`🔄 Updated password for: ${trainerData.email} / 123456`);
+          } else {
+            console.log(`🔎 Trainer account present: ${trainerData.email}`);
+          }
+        }
+      } catch (err) {
+        console.warn(`⚠️ Failed to seed trainer ${trainerData.email}:`, err.message);
+      }
     }
 
     // Seed demo trainee user if missing
