@@ -40,6 +40,8 @@ const userSchema = new mongoose.Schema({
       'NDMA',      // National Disaster Management Authority
       'SDMA',      // State Disaster Management Authority
       'DDMA',      // District Disaster Management Authority
+      'LBSNAA',    // Lal Bahadur Shastri National Academy of Administration
+      'ATI',       // Administrative Training Institute
       'NGO',       // Non-Governmental Organizations
       'Fire Services', 
       'Police', 
@@ -48,6 +50,7 @@ const userSchema = new mongoose.Schema({
       'Military',
       'Educational Institute',
       'Corporate',
+      'Central Authority',
       'Other'
     ],
     default: 'NDMA' 
@@ -1747,8 +1750,8 @@ async function start() {
           password: passwordHash,
           role: 'authority',
           organization: 'Central Authority',
-          phone: '',
           designation: 'Administrator'
+          // Don't set phone for authority (undefined, not empty string)
         });
         await seeded.save();
         console.log(`🌱 Seeded central authority: ${seedEmail} / ${seedPass}`);
@@ -1800,8 +1803,8 @@ async function start() {
             ...trainerData,
             email: trainerData.email.toLowerCase(),
             password: passwordHash,
-            role: 'trainer',
-            phone: ''
+            role: 'trainer'
+            // Don't set phone for trainers (undefined, not empty string)
           });
           await trainer.save();
           console.log(`🌱 Seeded ${trainerData.organization} trainer: ${trainerData.email} / ${trainerData.password}`);
