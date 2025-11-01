@@ -68,6 +68,7 @@ const userSchema = new mongoose.Schema({
   verified: { type: Boolean, default: false },
   last_login: Date,
   device_tokens: [String], // For push notifications
+  refresh_token: { type: String }, // For persistent login (30 days)
   
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
@@ -83,6 +84,33 @@ import Report from './models/Report.js';
 import AttendanceSession from './models/AttendanceSession.js';
 import AttendanceRecord from './models/AttendanceRecord.js';
 import AuditLog from './models/AuditLog.js';
+
+// ---- Token Generation Helpers ----
+function generateAccessToken(user) {
+  return jwt.sign(
+    { 
+      userId: user._id.toString(), 
+      email: user.email || user.phone,
+      phone: user.phone,
+      role: user.role, 
+      name: user.name,
+      organization: user.organization
+    },
+    JWT_SECRET,
+    { expiresIn: "15m" } // Short-lived access token (15 minutes)
+  );
+}
+
+function generateRefreshToken(user) {
+  return jwt.sign(
+    { 
+      userId: user._id.toString(), 
+      type: 'refresh'
+    },
+    JWT_SECRET,
+    { expiresIn: "30d" } // Long-lived refresh token (30 days)
+  );
+}
 
 // ---- Health Check ----
 app.get("/", (req, res) => {
@@ -214,17 +242,19 @@ app.post("/api/auth/register", async (req, res) => {
 
       console.log(`✅ Trainee registered: ${newTrainee.phone}`);
 
-      // Issue JWT token for trainee
-      const token = jwt.sign(
-        { userId: newTrainee._id.toString(), phone: newTrainee.phone, role: newTrainee.role, name: newTrainee.name },
-        JWT_SECRET,
-        { expiresIn: "7d" }
-      );
+      // Generate both access and refresh tokens
+      const accessToken = generateAccessToken(newTrainee);
+      const refreshToken = generateRefreshToken(newTrainee);
+
+      // Save refresh token to database
+      newTrainee.refresh_token = refreshToken;
+      await newTrainee.save();
 
       return res.status(201).json({ 
         success: true, 
         user: traineeResponse,
-        token,
+        accessToken,
+        refreshToken,
         message: "Trainee registered successfully" 
       });
     }
@@ -276,16 +306,20 @@ app.post("/api/auth/register", async (req, res) => {
     };
 
     console.log(`✅ User registered: ${newUser.email}`);
-    // Auto-issue token on register for convenience
-    const token = jwt.sign(
-      { userId: newUser._id.toString(), email: newUser.email, role: newUser.role, name: newUser.name },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    
+    // Generate both access and refresh tokens
+    const accessToken = generateAccessToken(newUser);
+    const refreshToken = generateRefreshToken(newUser);
+
+    // Save refresh token to database
+    newUser.refresh_token = refreshToken;
+    await newUser.save();
+
     res.status(201).json({ 
       success: true, 
       user: userResponse,
-      token,
+      accessToken,
+      refreshToken,
       message: "Account created successfully" 
     });
 
@@ -356,22 +390,22 @@ app.post("/api/auth/login", async (req, res) => {
       createdAt: user.createdAt,
     };
 
+    // Generate both access and refresh tokens
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    // Save refresh token to database for validation
+    user.refresh_token = refreshToken;
+    user.last_login = new Date();
+    await user.save();
+
     console.log(`✅ User logged in: ${user.phone || user.email}`);
-    const token = jwt.sign(
-      { 
-        userId: user._id.toString(), 
-        email: user.email || '', 
-        phone: user.phone || '',
-        role: user.role, 
-        name: user.name 
-      },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    
     res.json({ 
       success: true, 
       user: userResponse,
-      token,
+      accessToken,
+      refreshToken,
       message: "Login successful" 
     });
 
@@ -380,6 +414,66 @@ app.post("/api/auth/login", async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: "Login failed. Please try again." 
+    });
+  }
+});
+
+// ---- Refresh Access Token ----
+app.post("/api/auth/refresh-token", async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({ 
+        success: false, 
+        error: "Refresh token required" 
+      });
+    }
+
+    // Verify refresh token
+    let payload;
+    try {
+      payload = jwt.verify(refreshToken, JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ 
+        success: false, 
+        error: "Invalid or expired refresh token. Please login again." 
+      });
+    }
+
+    // Check if it's a refresh token
+    if (payload.type !== 'refresh') {
+      return res.status(401).json({ 
+        success: false, 
+        error: "Invalid token type" 
+      });
+    }
+
+    // Find user and validate stored refresh token
+    const user = await User.findById(payload.userId);
+    if (!user || user.refresh_token !== refreshToken) {
+      return res.status(401).json({ 
+        success: false, 
+        error: "Invalid refresh token. Please login again." 
+      });
+    }
+
+    // Generate new access token
+    const newAccessToken = generateAccessToken(user);
+
+    console.log(`🔄 Token refreshed for user: ${user.phone || user.email}`);
+
+    res.json({ 
+      success: true, 
+      accessToken: newAccessToken,
+      message: "Access token refreshed successfully" 
+    });
+
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Token refresh failed. Please try again." 
     });
   }
 });
