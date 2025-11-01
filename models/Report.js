@@ -26,6 +26,22 @@ const ReportSchema = new mongoose.Schema({
   effectiveness: { type: String, default: '' },
   photos: [{ type: String }],
   documents: [FileSchema],
+  
+  // Attendance fields
+  hasLiveAttendance: { type: Boolean, default: false },
+  attendanceSessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'AttendanceSession' },
+  attendanceCount: { type: Number, default: 0 },
+  attendanceDetails: [{
+    traineeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    traineeName: String,
+    traineePhone: String,
+    traineeAge: String,
+    traineeDistrict: String,
+    traineeState: String,
+    markedAt: Date,
+    method: String
+  }],
+  
   // Workflow fields for authority review
   status: { type: String, enum: ['draft', 'pending', 'accepted', 'rejected'], default: 'draft' },
   sentToOrganization: { type: String, default: '' }, // Which org received this

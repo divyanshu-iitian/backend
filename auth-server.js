@@ -443,7 +443,7 @@ app.post("/api/reports/create", authenticate, async (req, res) => {
 
     const {
       trainingType, location, date, participants, duration,
-      description, effectiveness, photos, documents, userName, userEmail
+      description, effectiveness, photos, documents, userName, userEmail, session_token
     } = req.body;
 
     if (!trainingType || !location || !date) {
@@ -486,6 +486,41 @@ app.post("/api/reports/create", authenticate, async (req, res) => {
       photos: Array.isArray(photos) ? photos : (photos ? [photos] : []),
       documents: documents || [],
     });
+
+    // Auto-link attendance if session_token provided
+    if (session_token) {
+      try {
+        const session = await AttendanceSession.findOne({ session_token });
+        if (session) {
+          const attendanceRecords = await AttendanceRecord.find({ session_id: session._id })
+            .populate('user_id', 'name phone age_bracket district state');
+
+          const attendanceDetails = attendanceRecords.map(record => ({
+            traineeId: record.user_id?._id,
+            traineeName: record.user_name || record.user_id?.name || 'Unknown',
+            traineePhone: record.user_phone || record.user_id?.phone || '',
+            traineeAge: record.user_id?.age_bracket || '',
+            traineeDistrict: record.user_id?.district || '',
+            traineeState: record.user_id?.state || '',
+            markedAt: record.timestamp,
+            method: record.method
+          }));
+
+          newReport.hasLiveAttendance = true;
+          newReport.attendanceSessionId = session._id;
+          newReport.attendanceCount = attendanceRecords.length;
+          newReport.attendanceDetails = attendanceDetails;
+          newReport.participants = attendanceRecords.length; // Override with actual attendance count
+
+          console.log(`✅ Auto-linked attendance: ${attendanceRecords.length} trainees from session ${session_token}`);
+        } else {
+          console.log(`⚠️ Attendance session not found: ${session_token}`);
+        }
+      } catch (attendanceError) {
+        console.error("⚠️ Failed to link attendance (non-critical):", attendanceError.message);
+        // Continue creating report even if attendance linking fails
+      }
+    }
 
     console.log("💾 Attempting to save report:", JSON.stringify(newReport, null, 2));
 
@@ -1206,6 +1241,185 @@ app.put("/api/attendance/sessions/:session_token/end", authenticate, async (req,
 });
 
 // ==================== END ATTENDANCE ENDPOINTS ====================
+
+// ---- Link Attendance Session to Report ----
+app.post("/api/reports/:reportId/link-attendance", authenticate, async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { session_token } = req.body;
+
+    if (!session_token) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "session_token is required" 
+      });
+    }
+
+    // Find the attendance session
+    const session = await AttendanceSession.findOne({ session_token });
+    if (!session) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Attendance session not found" 
+      });
+    }
+
+    // Get all attendance records for this session with trainee details
+    const attendanceRecords = await AttendanceRecord.find({ session_id: session._id })
+      .populate('user_id', 'name phone age_bracket district state');
+
+    // Format attendance details
+    const attendanceDetails = attendanceRecords.map(record => ({
+      traineeId: record.user_id?._id,
+      traineeName: record.user_name || record.user_id?.name || 'Unknown',
+      traineePhone: record.user_phone || record.user_id?.phone || '',
+      traineeAge: record.user_id?.age_bracket || '',
+      traineeDistrict: record.user_id?.district || '',
+      traineeState: record.user_id?.state || '',
+      markedAt: record.timestamp,
+      method: record.method
+    }));
+
+    // Update report with attendance data
+    const report = await Report.findByIdAndUpdate(
+      reportId,
+      {
+        hasLiveAttendance: true,
+        attendanceSessionId: session._id,
+        attendanceCount: attendanceRecords.length,
+        attendanceDetails,
+        participants: attendanceRecords.length, // Update participants count
+        updatedAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (!report) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Report not found" 
+      });
+    }
+
+    console.log(`✅ Linked attendance session ${session_token} to report ${reportId}`);
+
+    res.json({
+      success: true,
+      report,
+      attendanceCount: attendanceRecords.length,
+      message: "Attendance linked to report successfully"
+    });
+
+  } catch (error) {
+    console.error("❌ Link attendance error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to link attendance to report",
+      details: error.message 
+    });
+  }
+});
+
+// ---- Authority Analytics with Attendance Data ----
+app.get("/api/reports/analytics-with-attendance", authenticate, async (req, res) => {
+  try {
+    // Verify user is authority
+    if (req.user.role !== 'authority') {
+      return res.status(403).json({ 
+        success: false, 
+        error: "Access denied. Authority role required." 
+      });
+    }
+
+    // Get all accepted reports with attendance
+    const reportsWithAttendance = await Report.find({ 
+      hasLiveAttendance: true,
+      status: 'accepted'
+    }).select('training_title location attendanceCount attendanceDetails createdAt');
+
+    // Calculate analytics
+    let totalReportsWithAttendance = reportsWithAttendance.length;
+    let totalTrainees = 0;
+    let ageDistribution = {};
+    let districtDistribution = {};
+    let stateDistribution = {};
+    let methodDistribution = {};
+
+    reportsWithAttendance.forEach(report => {
+      totalTrainees += report.attendanceCount || 0;
+
+      report.attendanceDetails?.forEach(detail => {
+        // Age distribution
+        const age = detail.traineeAge || 'Unknown';
+        ageDistribution[age] = (ageDistribution[age] || 0) + 1;
+
+        // District distribution
+        const district = detail.traineeDistrict || 'Unknown';
+        districtDistribution[district] = (districtDistribution[district] || 0) + 1;
+
+        // State distribution
+        const state = detail.traineeState || 'Unknown';
+        stateDistribution[state] = (stateDistribution[state] || 0) + 1;
+
+        // Method distribution
+        const method = detail.method || 'Unknown';
+        methodDistribution[method] = (methodDistribution[method] || 0) + 1;
+      });
+    });
+
+    // Get top 5 districts and states
+    const topDistricts = Object.entries(districtDistribution)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([district, count]) => ({ district, count }));
+
+    const topStates = Object.entries(stateDistribution)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([state, count]) => ({ state, count }));
+
+    // Recent trainings with high attendance
+    const topTrainings = reportsWithAttendance
+      .sort((a, b) => (b.attendanceCount || 0) - (a.attendanceCount || 0))
+      .slice(0, 5)
+      .map(r => ({
+        title: r.training_title,
+        location: r.location,
+        attendanceCount: r.attendanceCount,
+        date: r.createdAt
+      }));
+
+    res.json({
+      success: true,
+      analytics: {
+        summary: {
+          totalReportsWithAttendance,
+          totalTrainees,
+          averageAttendancePerReport: totalReportsWithAttendance > 0 
+            ? Math.round(totalTrainees / totalReportsWithAttendance) 
+            : 0
+        },
+        demographics: {
+          ageDistribution,
+          topDistricts,
+          topStates
+        },
+        attendance: {
+          methodDistribution,
+          topTrainings
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Analytics error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch analytics",
+      details: error.message 
+    });
+  }
+});
 
 // ---- Connect to MongoDB & Start Server ----
 async function start() {
