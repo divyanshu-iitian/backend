@@ -16,6 +16,7 @@ const ReportSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   userEmail: { type: String, required: true },
   userName: { type: String, default: 'Unknown' },
+  userOrganization: { type: String, default: 'NDMA' }, // Organization of reporter
   trainingType: { type: String, required: true },
   location: { type: LocationSchema, required: true },
   date: { type: String, required: true },
@@ -25,6 +26,13 @@ const ReportSchema = new mongoose.Schema({
   effectiveness: { type: String, default: '' },
   photos: [{ type: String }],
   documents: [FileSchema],
+  // Workflow fields for authority review
+  status: { type: String, enum: ['draft', 'pending', 'accepted', 'rejected'], default: 'draft' },
+  sentToOrganization: { type: String, default: '' }, // Which org received this
+  sentByUserName: { type: String, default: '' },
+  rejectionReason: { type: String, default: '' },
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Who approved/rejected
+  reviewedAt: { type: Date },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
