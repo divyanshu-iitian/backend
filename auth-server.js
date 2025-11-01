@@ -1421,6 +1421,203 @@ app.get("/api/reports/analytics-with-attendance", authenticate, async (req, res)
   }
 });
 
+// ---- Get Reports by Organization and Date (for Authority Live Map) ----
+app.get("/api/reports/live-map", authenticate, async (req, res) => {
+  try {
+    // Verify user is authority
+    if (req.user.role !== 'authority') {
+      return res.status(403).json({ 
+        success: false, 
+        error: "Access denied. Authority role required." 
+      });
+    }
+
+    const { organization, date } = req.query;
+    
+    // Build filter query
+    let filter = { status: 'accepted' }; // Only show accepted reports
+    
+    // Filter by organization if provided
+    if (organization && organization !== 'all') {
+      filter.userOrganization = organization;
+    }
+    
+    // Filter by date if provided (format: YYYY-MM-DD)
+    if (date) {
+      // Match reports where date field starts with the given date
+      filter.date = { $regex: `^${date}` };
+    }
+
+    const reports = await Report.find(filter)
+      .select('userOrganization trainingType location date participants userName userEmail hasLiveAttendance attendanceCount createdAt')
+      .sort({ createdAt: -1 });
+
+    // Group by organization
+    const organizationStats = {};
+    reports.forEach(report => {
+      const org = report.userOrganization || 'Unknown';
+      if (!organizationStats[org]) {
+        organizationStats[org] = {
+          count: 0,
+          totalParticipants: 0,
+          locations: []
+        };
+      }
+      organizationStats[org].count += 1;
+      organizationStats[org].totalParticipants += report.participants || 0;
+      organizationStats[org].locations.push({
+        latitude: report.location.latitude,
+        longitude: report.location.longitude,
+        name: report.location.name
+      });
+    });
+
+    res.json({
+      success: true,
+      reports,
+      stats: {
+        total: reports.length,
+        byOrganization: organizationStats
+      },
+      filters: {
+        organization: organization || 'all',
+        date: date || 'all'
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Live map data error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch live map data",
+      details: error.message 
+    });
+  }
+});
+
+// ---- Get Organization-wise Analytics ----
+app.get("/api/reports/analytics-by-organization", authenticate, async (req, res) => {
+  try {
+    // Verify user is authority
+    if (req.user.role !== 'authority') {
+      return res.status(403).json({ 
+        success: false, 
+        error: "Access denied. Authority role required." 
+      });
+    }
+
+    const { organization } = req.query;
+
+    // Build filter
+    let filter = {};
+    if (organization && organization !== 'all') {
+      filter.userOrganization = organization;
+    }
+
+    const reports = await Report.find(filter);
+
+    // Overall stats
+    const totalReports = reports.length;
+    const totalParticipants = reports.reduce((sum, r) => sum + (r.participants || 0), 0);
+    const reportsWithAttendance = reports.filter(r => r.hasLiveAttendance).length;
+    const totalAttendance = reports.reduce((sum, r) => sum + (r.attendanceCount || 0), 0);
+
+    // Status breakdown
+    const statusBreakdown = {
+      draft: reports.filter(r => r.status === 'draft').length,
+      pending: reports.filter(r => r.status === 'pending').length,
+      accepted: reports.filter(r => r.status === 'accepted').length,
+      rejected: reports.filter(r => r.status === 'rejected').length
+    };
+
+    // Training type breakdown
+    const trainingTypes = {};
+    reports.forEach(r => {
+      const type = r.trainingType || 'Unknown';
+      trainingTypes[type] = (trainingTypes[type] || 0) + 1;
+    });
+
+    // Organization breakdown (if showing all)
+    const organizations = {};
+    if (!organization || organization === 'all') {
+      reports.forEach(r => {
+        const org = r.userOrganization || 'Unknown';
+        if (!organizations[org]) {
+          organizations[org] = {
+            count: 0,
+            participants: 0,
+            withAttendance: 0
+          };
+        }
+        organizations[org].count += 1;
+        organizations[org].participants += r.participants || 0;
+        if (r.hasLiveAttendance) organizations[org].withAttendance += 1;
+      });
+    }
+
+    // Monthly trend (last 6 months)
+    const monthlyTrend = {};
+    reports.forEach(r => {
+      const date = new Date(r.createdAt);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      monthlyTrend[monthKey] = (monthlyTrend[monthKey] || 0) + 1;
+    });
+
+    // Demographics from attendance details
+    const demographics = {
+      age: {},
+      district: {},
+      state: {}
+    };
+
+    reports.forEach(report => {
+      report.attendanceDetails?.forEach(detail => {
+        // Age
+        const age = detail.traineeAge || 'Unknown';
+        demographics.age[age] = (demographics.age[age] || 0) + 1;
+
+        // District
+        const district = detail.traineeDistrict || 'Unknown';
+        demographics.district[district] = (demographics.district[district] || 0) + 1;
+
+        // State
+        const state = detail.traineeState || 'Unknown';
+        demographics.state[state] = (demographics.state[state] || 0) + 1;
+      });
+    });
+
+    res.json({
+      success: true,
+      organization: organization || 'all',
+      summary: {
+        totalReports,
+        totalParticipants,
+        reportsWithAttendance,
+        totalAttendance,
+        averageParticipants: totalReports > 0 ? Math.round(totalParticipants / totalReports) : 0,
+        averageAttendance: reportsWithAttendance > 0 ? Math.round(totalAttendance / reportsWithAttendance) : 0
+      },
+      breakdowns: {
+        status: statusBreakdown,
+        trainingTypes,
+        organizations: organization === 'all' || !organization ? organizations : null
+      },
+      trends: {
+        monthly: monthlyTrend
+      },
+      demographics
+    });
+
+  } catch (error) {
+    console.error("❌ Organization analytics error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch organization analytics",
+      details: error.message 
+    });
+  }
+});
+
 // ---- Connect to MongoDB & Start Server ----
 async function start() {
   try {
