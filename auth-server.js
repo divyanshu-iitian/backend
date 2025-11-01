@@ -1731,7 +1731,7 @@ async function start() {
     }
 
     console.log("🔄 Connecting to MongoDB...");
-    await mongoose.connect(MONGODB_URI, { dbName: "ndma_auth_db" });
+    await mongoose.connect(MONGODB_URI, { dbName: "ndma-training" });
     console.log("✅ Connected to MongoDB");
 
     // Seed default authority user if missing
