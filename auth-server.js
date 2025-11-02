@@ -912,10 +912,16 @@ app.delete("/api/reports/delete/:reportId", authenticate, async (req, res) => {
     }
     
     console.log('📋 Found report - Owner:', existing.userEmail, '| Requesting user:', req.user.email);
+    console.log('📋 Report userId:', existing.userId, '| trainer_id:', existing.trainer_id);
     
-    if (existing.userId.toString() !== req.user.id && req.user.role !== 'authority') {
+    // Check permission: either owner (userId or trainer_id match) or authority
+    const isOwner = (existing.userId && existing.userId.toString() === req.user.id) || 
+                    (existing.trainer_id && existing.trainer_id.toString() === req.user.id);
+    const isAuthority = req.user.role === 'authority';
+    
+    if (!isOwner && !isAuthority) {
       console.error('❌ Forbidden - User not owner or authority');
-      return res.status(403).json({ success: false, error: "Forbidden" });
+      return res.status(403).json({ success: false, error: "Forbidden: You can only delete your own reports" });
     }
 
     const report = await Report.findByIdAndDelete(reportId);
